@@ -34,9 +34,9 @@ function getApiKeys() {
     ''
   envKeyRaw
     .split(',')
-    .map((key) => key.trim())
+    .map((key: string) => key.trim())
     .filter(Boolean)
-    .forEach((key) => envKeys.push(key))
+    .forEach((key: string) => envKeys.push(key))
 
   const combined = [...envKeys, ...GEMINI_API_KEYS]
   return Array.from(new Set(combined))
@@ -351,6 +351,10 @@ export async function streamDashScope(
             textDelta = delta.map((part: any) => part.text || part).filter(Boolean).join('')
           }
           if (textDelta) {
+            // 检查是否已取消，如果已取消则不更新内容
+            if (options.signal?.aborted) {
+              return true // 返回 true 表示应该停止
+            }
             fullText += textDelta
             options.onDelta?.(textDelta)
           }
@@ -367,6 +371,10 @@ export async function streamDashScope(
       // 修改flushBuffer以更新活动时间
       const originalFlushBuffer = flushBuffer
       const flushBufferWithActivity = (line: string) => {
+        // 在处理前检查是否已取消
+        if (options.signal?.aborted) {
+          return true
+        }
         const result = originalFlushBuffer(line)
         // 如果有内容输出，更新活动时间
         if (fullText.length > 0) {
@@ -376,6 +384,12 @@ export async function streamDashScope(
       }
 
       while (true) {
+        // 检查是否已取消
+        if (options.signal?.aborted) {
+          reader.cancel().catch(() => {})
+          throw new DOMException('Aborted', 'AbortError')
+        }
+
         // 检查活动超时
         if (Date.now() - lastActivityTime > ACTIVITY_TIMEOUT_MS) {
           console.warn('流式输出超时，尝试完成当前内容')
@@ -398,7 +412,7 @@ export async function streamDashScope(
         }
       }
 
-      if (buffer.trim()) {
+      if (buffer.trim() && !options.signal?.aborted) {
         flushBufferWithActivity(buffer)
       }
 

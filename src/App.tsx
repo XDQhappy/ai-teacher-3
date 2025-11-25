@@ -7,6 +7,10 @@ import type { ChatMessage } from './types/chat'
 import { FormulaText } from './components/FormulaText'
 import { LessonContent } from './components/LessonContent'
 import { FileUpload } from './components/FileUpload'
+import { OptionalInputs } from './components/OptionalInputs'
+import type { OptionalInputsData } from './config/prompt'
+import { exportLessonToWord } from './utils/exportToWord'
+import { exportLessonToPPT } from './utils/exportToPPT'
 
 const MODULE_OVERVIEW =
   '本模块旨在解决通用 AI 模型生成教案"千篇一律"、不符合校本教学特色的核心痛点。我们将构建一个深度融合贵校优秀教案资源的 AI 系统，分阶段实现从"能用"到"好用"再到"专属"的进化。最终目标是让系统生成的每一份教案，都蕴含贵校的教学智慧和育人理念，成为教师备课的得力 AI 助手。'
@@ -78,7 +82,29 @@ function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [currentTopic, setCurrentTopic] = useState<string>('')
+  const [optionalInputs, setOptionalInputs] = useState<OptionalInputsData>({
+    teachingObjectives: '',
+    teachingFocus: '',
+    teachingDifficulties: '',
+    lessonType: '',
+  })
   const abortControllerRef = useRef<AbortController | null>(null)
+  const generatingMessageTimestampRef = useRef<number | null>(null)
+  
+  // 获取最后一个已完成的教案内容
+  const getLastCompletedLesson = () => {
+    const assistantMessages = messages.filter(
+      (msg) => msg.role === 'assistant' && msg.content.trim()
+    )
+    if (assistantMessages.length === 0) return null
+    
+    const lastMessage = assistantMessages[assistantMessages.length - 1]
+    const isGenerating = generatingMessageTimestampRef.current === lastMessage.timestamp && isLoading
+    
+    return isGenerating ? null : lastMessage
+  }
+  
+  const lastLesson = getLastCompletedLesson()
 
   useEffect(() => {
     return () => {
@@ -86,7 +112,24 @@ function App() {
     }
   }, [])
 
+  const handleCancel = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+      setIsLoading(false)
+      // 清除生成状态，这样已生成的内容可以显示下载按钮
+      generatingMessageTimestampRef.current = null
+      // 不删除消息，保留已生成的内容，只是停止继续生成
+    }
+  }
+
   const handleSend = async () => {
+    // 如果正在生成，点击按钮则取消
+    if (isLoading) {
+      handleCancel()
+      return
+    }
+
     const trimmed = input.trim()
     if (!trimmed) return
 
@@ -110,7 +153,7 @@ function App() {
     let placeholder: ChatMessage | null = null
 
     try {
-      const finalPrompt = composePrompt(trimmed)
+      const finalPrompt = composePrompt(trimmed, optionalInputs)
       placeholder = {
         role: 'assistant',
         content: '',
@@ -119,12 +162,27 @@ function App() {
       }
 
       setMessages((prev) => [...prev, placeholder as ChatMessage])
+      generatingMessageTimestampRef.current = placeholder.timestamp
 
       let accumulated = ''
 
       await streamDashScope(finalPrompt, {
         signal: controller.signal,
         onDelta: (delta) => {
+          // 检查是否已取消
+          if (controller.signal.aborted || abortControllerRef.current !== controller) {
+            // 即使已取消，也要保存当前已累积的内容（最后一次保存）
+            if (accumulated) {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  placeholder && msg.timestamp === placeholder.timestamp
+                    ? { ...msg, content: accumulated }
+                    : msg,
+                ),
+              )
+            }
+            return
+          }
           accumulated += delta
           setMessages((prev) =>
             prev.map((msg) =>
@@ -137,9 +195,21 @@ function App() {
       })
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
+        // 取消时保留已生成的内容，只删除完全空的消息
         if (placeholder) {
           const placeholderTimestamp = placeholder.timestamp
-          setMessages((prev) => prev.filter((msg) => msg.timestamp !== placeholderTimestamp))
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (msg.timestamp === placeholderTimestamp) {
+                // 如果消息有内容，保留；如果完全为空，删除
+                if (msg.content.trim()) {
+                  return msg // 保留已有内容
+                }
+                return null // 标记为删除
+              }
+              return msg
+            }).filter((msg): msg is ChatMessage => msg !== null)
+          )
         }
         return
       }
@@ -160,6 +230,7 @@ function App() {
         abortControllerRef.current = null
       }
       setIsLoading(false)
+      generatingMessageTimestampRef.current = null
     }
   }
 
@@ -174,6 +245,27 @@ function App() {
 
   const handlePresetInsert = (preset: string) => {
     setInput(preset)
+  }
+
+  const handleDownloadLesson = async (content: string, topic?: string) => {
+    try {
+      // 生成文件名：如果有课题则使用课题，否则使用默认名称
+      const filename = topic || '教案'
+      await exportLessonToWord(content, filename)
+    } catch (error) {
+      console.error('下载教案失败:', error)
+      setError('下载教案失败，请稍后重试')
+    }
+  }
+
+  const handleExportPPT = async (content: string, topic?: string) => {
+    try {
+      const filename = topic || '教案'
+      await exportLessonToPPT(content, filename)
+    } catch (error) {
+      console.error('导出PPT失败:', error)
+      setError('导出PPT失败，请稍后重试')
+    }
   }
 
   return (
@@ -264,11 +356,20 @@ function App() {
               <p>欢迎连云港市新海实验中学的同仁莅临交流指导，共促教育高质量发展！</p>
             </div>
           )}
-          {messages.map((message) => (
-            <article key={message.timestamp} className={`bubble ${message.role}`}>
-              <header>
-                <span>{message.role === 'user' ? '教师' : 'DeePrompt'}</span>
-              </header>
+          {messages.map((message) => {
+            // 判断是否正在生成：是最后一个 assistant 消息且正在加载中
+            // const isGenerating = message.role === 'assistant' && 
+            //                      generatingMessageTimestampRef.current === message.timestamp &&
+            //                      isLoading
+            // const canDownload = message.role === 'assistant' && 
+            //                    message.content.trim() && 
+            //                    !isGenerating
+
+            return (
+              <article key={message.timestamp} className={`bubble ${message.role}`}>
+                <header>
+                  <span>{message.role === 'user' ? '教师' : 'DeePrompt'}</span>
+                </header>
               <div className="message-content">
                 {message.role === 'assistant' ? (
                   <LessonContent content={message.content} />
@@ -282,20 +383,50 @@ function App() {
                 )}
               </div>
             </article>
-          ))}
+            )
+          })}
       </div>
         {error && <div className="error">{error}</div>}
-        <div className="composer">
-          <textarea
-            value={input}
-            placeholder="请输入你的教案需求，例如：初三物理浮力实验课教学设计..."
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isLoading}
-          />
-          <button onClick={handleSend} disabled={isLoading || !input.trim()}>
-            {isLoading ? '生成中…' : '生成教案'}
-        </button>
+        <div className="composer-wrapper">
+          <OptionalInputs data={optionalInputs} onChange={setOptionalInputs} />
+          <div className="composer">
+            <div className="composer-main">
+              <textarea
+                value={input}
+                placeholder="请输入你的教案需求，例如：初一上册勾股定理教学课教学设计"
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={isLoading}
+              />
+              <button
+                onClick={handleSend}
+                disabled={!isLoading && !input.trim()}
+                className="generate-button"
+              >
+                {isLoading ? '停止生成' : '生成教案'}
+              </button>
+            </div>
+            <div className="export-buttons-column">
+              <button
+                className="export-button export-button-word"
+                onClick={() => lastLesson && handleDownloadLesson(lastLesson.content, lastLesson.topic)}
+                title="下载教案为 Word 文档"
+                type="button"
+                disabled={!lastLesson}
+              >
+                📥 Word
+              </button>
+              <button
+                className="export-button export-button-ppt"
+                onClick={() => lastLesson && handleExportPPT(lastLesson.content, lastLesson.topic)}
+                title="导出教案为 PPT 演示文稿"
+                type="button"
+                disabled={!lastLesson}
+              >
+                📊 PPT
+              </button>
+            </div>
+          </div>
         </div>
       </section>
       </div>

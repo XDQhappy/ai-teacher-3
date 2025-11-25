@@ -16,14 +16,6 @@ export function FileUpload({ onFileUploaded, onAnalysisComplete, onTopicDetected
   const [fileSummary, setFileSummary] = useState<string>('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const acceptedTypes = [
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/vnd.ms-powerpoint',
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    'text/plain',
-  ]
 
   const acceptedExtensions = ['.pdf', '.doc', '.docx', '.ppt', '.pptx', '.txt']
 
