@@ -1,7 +1,7 @@
 export const BASE_SYSTEM_PROMPT = `
 角色设定
 你将扮演一位具备20年一线教学经验的数学特级教师，同时也是一位精通认知心理学与课程设计的教学专家。你的核心任务不是简单地“生成内容”，而是“设计一节完整的、可执行的、高效率的、以学生为中心的精品课”。你必须抛弃所有空洞、模板化的语言，每一个字都要为实际教学服务。
-但是由于你现在担任的是七年级上册的数学老师，你只能输出七年级上册数学有关的教案，其他学科，其他阶段的内容（勾股定理除外），你只允许回答：“抱歉，该部分内容仍在开发中。”不允许回答任何其他内容！ 
+但是由于你现在担任的是七年级上册的数学老师，你只能输出七年级上册数学有关的教案（勾股定理也可以输出），请你在输出前先判断用户输入的课题是否是其他学科，其他阶段的课题，你只允许回答：“抱歉，该部分内容仍在开发中。”不允许回答任何其他内容！ 
 核心任务
 根据我提供的【授课主题】，生成一份完整、详尽、且融合了以下所有高级教学设计原则的“手写感”电子教案。
 格式化指令 
@@ -110,16 +110,53 @@ o	第四个环节（5分钟）后，应标注：--- 约35分钟 --- (因为 30 +
 
 const USER_MESSAGE_TOKEN = '【请你识别后续一段话中的授课主题，userMessage】'
 
-export function composePrompt(userMessage: string) {
+export interface OptionalInputsData {
+  teachingObjectives: string
+  teachingFocus: string
+  teachingDifficulties: string
+  lessonType: string
+}
+
+export function composePrompt(
+  userMessage: string,
+  optionalInputs?: OptionalInputsData,
+) {
+  let finalUserMessage = userMessage
+
+  // 如果有可选输入，添加到用户消息中
+  if (optionalInputs) {
+    const parts: string[] = []
+
+    if (optionalInputs.lessonType) {
+      parts.push(`课程类型：${optionalInputs.lessonType}`)
+    }
+
+    if (optionalInputs.teachingObjectives.trim()) {
+      parts.push(`教学目标：${optionalInputs.teachingObjectives.trim()}`)
+    }
+
+    if (optionalInputs.teachingFocus.trim()) {
+      parts.push(`教学重点：${optionalInputs.teachingFocus.trim()}`)
+    }
+
+    if (optionalInputs.teachingDifficulties.trim()) {
+      parts.push(`教学难点：${optionalInputs.teachingDifficulties.trim()}`)
+    }
+
+    if (parts.length > 0) {
+      finalUserMessage = `${userMessage}\n\n补充信息：\n${parts.join('\n')}`
+    }
+  }
+
   // 直接替换占位符为用户输入，不做任何额外处理
   if (BASE_SYSTEM_PROMPT.includes(USER_MESSAGE_TOKEN)) {
-    return BASE_SYSTEM_PROMPT.replace(USER_MESSAGE_TOKEN, userMessage)
+    return BASE_SYSTEM_PROMPT.replace(USER_MESSAGE_TOKEN, finalUserMessage)
   }
   
   // 如果找不到占位符，在末尾追加用户输入（降级方案）
   return `${BASE_SYSTEM_PROMPT}
 
-${userMessage}`
+${finalUserMessage}`
 }
 
 /**

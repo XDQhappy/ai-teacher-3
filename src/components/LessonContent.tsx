@@ -1,4 +1,5 @@
 import { FormulaText } from './FormulaText'
+import type { ReactElement } from 'react'
 
 interface LessonContentProps {
   content: string
@@ -19,7 +20,7 @@ function cleanMarkdown(text: string): string {
 
 export function LessonContent({ content }: LessonContentProps) {
   const lines = content.split('\n')
-  const elements: JSX.Element[] = []
+  const elements: ReactElement[] = []
 
   lines.forEach((line, index) => {
     const cleaned = cleanMarkdown(line)
